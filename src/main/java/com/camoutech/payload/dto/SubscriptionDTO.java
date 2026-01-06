@@ -47,6 +47,4 @@ public class SubscriptionDTO {
     private Long daysRemaining;
     private Boolean isValid;
     private Boolean isExpired;
-    private LocalDateTime createdAt;
-    private LocalDateTime updatedAt;
 }

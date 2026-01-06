@@ -1,5 +1,6 @@
 package com.camoutech.service;
 
+import com.camoutech.modal.SubscriptionPlan;
 import com.camoutech.payload.dto.SubscriptionPlanDTO;
 
 import java.util.List;
@@ -19,4 +20,6 @@ public interface SubscriptionPlanService {
     void deleteSubscription(Long planId) throws Exception;
 
     List<SubscriptionPlanDTO> getAllSubscriptionPlan();
+
+    SubscriptionPlan getBySubscriptionPlanCode(String subscriptionPlanCode) throws Exception;
 }
