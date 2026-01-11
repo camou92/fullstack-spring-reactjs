@@ -9,13 +9,12 @@ import com.camoutech.service.SubscriptionPlanService;
 import com.stripe.Stripe;
 import com.stripe.exception.StripeException;
 import com.stripe.model.checkout.Session;
+import com.stripe.param.PriceCreateParams;
+import com.stripe.param.ProductCreateParams;
 import com.stripe.param.checkout.SessionCreateParams;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-
-import java.math.BigDecimal;
-import java.math.RoundingMode;
 
 @Service
 @RequiredArgsConstructor
@@ -33,65 +32,52 @@ public class StripeService {
     private String cancelUrl;
 
     /**
-     * Création du lien de paiement Stripe (équivalent Razorpay PaymentLink)
+     * Création du lien de paiement Stripe avec Product + Price dynamiques
      */
     public PaymentLinkResponse createPaymentLink(User user, Payment payment) {
-
         try {
             Stripe.apiKey = stripeSecretKey;
 
-            // ===== Amount en centimes (Stripe l'exige)
-            Long amountInCents = BigDecimal
-                    .valueOf(payment.getAmount())
-                    .multiply(BigDecimal.valueOf(100))
-                    .setScale(0, RoundingMode.HALF_UP)
-                    .longValueExact();
+            // ===== Création dynamique du Product
+            ProductCreateParams productParams = ProductCreateParams.builder()
+                    .setName(payment.getDescription())
+                    .build();
+            com.stripe.model.Product product = com.stripe.model.Product.create(productParams);
 
-            SessionCreateParams.Builder params =
-                    SessionCreateParams.builder()
-                            .setMode(SessionCreateParams.Mode.PAYMENT)
-                            .setCustomerEmail(user.getEmail())
-                            .setSuccessUrl(
-                                    successUrl.replace(
-                                            "{PAYMENT_ID}",
-                                            payment.getId().toString()
-                                    ) + "?session_id={CHECKOUT_SESSION_ID}"
-                            )
-                            .setCancelUrl(cancelUrl)
-                            .addLineItem(
-                                    SessionCreateParams.LineItem.builder()
-                                            .setQuantity(1L)
-                                            .setPriceData(
-                                                    SessionCreateParams.PriceData.builder()
-                                                            .setCurrency("usd") // ou "mad"
-                                                            .setUnitAmount(amountInCents)
-                                                            .setProductData(
-                                                                    SessionCreateParams.ProductData.builder()
-                                                                            .setName(payment.getDescription())
-                                                                            .build()
-                                                            )
-                                                            .build()
-                                            )
-                                            .build()
-                            )
-                            // ===== METADATA (équivalent notes Razorpay)
-                            .putMetadata("user_id", user.getId().toString())
-                            .putMetadata("payment_id", payment.getId().toString())
-                            .putMetadata("type", payment.getPaymentType().name());
+            // ===== Création dynamique du Price
+            Long amountInCents = (long) Math.round(payment.getAmount() * 100); // ex: 10.5 -> 1050
+            PriceCreateParams priceParams = PriceCreateParams.builder()
+                    .setCurrency("usd") // ou "mad"
+                    .setUnitAmount(amountInCents)
+                    .setProduct(product.getId())
+                    .build();
+            com.stripe.model.Price price = com.stripe.model.Price.create(priceParams);
+
+            // ===== Création de la session Checkout
+            SessionCreateParams.Builder sessionBuilder = SessionCreateParams.builder()
+                    .setMode(SessionCreateParams.Mode.PAYMENT)
+                    .setCustomerEmail(user.getEmail())
+                    .setSuccessUrl(successUrl.replace("{PAYMENT_ID}", payment.getId().toString())
+                            + "?session_id={CHECKOUT_SESSION_ID}")
+                    .setCancelUrl(cancelUrl)
+                    .addLineItem(
+                            SessionCreateParams.LineItem.builder()
+                                    .setPrice(price.getId())
+                                    .setQuantity(1L)
+                                    .build()
+                    )
+                    .putMetadata("user_id", user.getId().toString())
+                    .putMetadata("payment_id", payment.getId().toString())
+                    .putMetadata("type", payment.getPaymentType().name());
 
             if (payment.getPaymentType() == PaymentType.MEMBERSHIP) {
-                params.putMetadata(
-                        "subscription_id",
-                        payment.getSubscription().getId().toString()
-                );
-                params.putMetadata(
-                        "plan",
-                        payment.getSubscription().getPlan().getPlanCode()
-                );
+                sessionBuilder.putMetadata("subscription_id", payment.getSubscription().getId().toString());
+                sessionBuilder.putMetadata("plan", payment.getSubscription().getPlan().getPlanCode());
             }
 
-            Session session = Session.create(params.build());
+            Session session = Session.create(sessionBuilder.build());
 
+            // ===== Retour du lien de paiement
             PaymentLinkResponse response = new PaymentLinkResponse();
             response.setPayment_link_id(session.getId());
             response.setPayment_link_url(session.getUrl());
@@ -103,10 +89,9 @@ public class StripeService {
     }
 
     /**
-     * Validation du paiement (simple, hors webhook)
+     * Validation du paiement (hors webhook)
      */
     public boolean isValidPayment(String sessionId) {
-
         try {
             Stripe.apiKey = stripeSecretKey;
 
@@ -124,9 +109,7 @@ public class StripeService {
 
             if (PaymentType.MEMBERSHIP.name().equals(paymentType)) {
                 String planCode = session.getMetadata().get("plan");
-                SubscriptionPlan plan =
-                        subscriptionPlanService.getBySubscriptionPlanCode(planCode);
-
+                SubscriptionPlan plan = subscriptionPlanService.getBySubscriptionPlanCode(planCode);
                 return amountPaid.equals(plan.getPrice());
             }
 

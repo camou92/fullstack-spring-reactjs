@@ -3,6 +3,7 @@ package com.camoutech.controller;
 import com.camoutech.exception.SubscriptionException;
 import com.camoutech.payload.dto.SubscriptionDTO;
 import com.camoutech.payload.response.ApiResponse;
+import com.camoutech.payload.response.PaymentInitiateResponse;
 import com.camoutech.service.SubscriptionService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -22,7 +23,7 @@ public class SubscriptionController {
 
     @PostMapping("/subscribe")
     public ResponseEntity<?> subscribe(@RequestBody SubscriptionDTO subscriptionDTO) throws Exception {
-        SubscriptionDTO dto = subscriptionService.subscribe(subscriptionDTO);
+        PaymentInitiateResponse dto = subscriptionService.subscribe(subscriptionDTO);
         return ResponseEntity.ok(dto);
     }
 

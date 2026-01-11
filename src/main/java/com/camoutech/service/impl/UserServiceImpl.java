@@ -43,4 +43,11 @@ public class UserServiceImpl implements UserService {
                 UserMapper::toDTO
         ).collect(Collectors.toList());
     }
+
+    @Override
+    public User findById(Long id) throws Exception {
+        return userRepository.findById(id).orElseThrow(
+                ()-> new Exception("user not found with given id!")
+        );
+    }
 }

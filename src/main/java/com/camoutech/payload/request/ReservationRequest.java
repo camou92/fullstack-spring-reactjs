@@ -1,13 +1,17 @@
 package com.camoutech.payload.request;
 
 import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
-public class PaymentVerifyRequest {
+@Builder
+public class ReservationRequest {
 
-    private String sessionId;
+    private Long bookId;
+
+    private String notes;
 }

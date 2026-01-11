@@ -1,13 +1,18 @@
 package com.camoutech.service.impl;
 
+import com.camoutech.domain.PaymentGateway;
+import com.camoutech.domain.PaymentType;
 import com.camoutech.exception.SubscriptionException;
 import com.camoutech.mapper.SubscriptionMapper;
 import com.camoutech.modal.Subscription;
 import com.camoutech.modal.SubscriptionPlan;
 import com.camoutech.modal.User;
 import com.camoutech.payload.dto.SubscriptionDTO;
+import com.camoutech.payload.request.PaymentInitiateRequest;
+import com.camoutech.payload.response.PaymentInitiateResponse;
 import com.camoutech.repository.SubscriptionPlanRepository;
 import com.camoutech.repository.SubscriptionRepository;
+import com.camoutech.service.PaymentService;
 import com.camoutech.service.SubscriptionService;
 import com.camoutech.service.UserService;
 import lombok.RequiredArgsConstructor;
@@ -26,9 +31,10 @@ public class SubscriptionImpl implements SubscriptionService {
     private final SubscriptionPlanRepository subscriptionPlanRepository;
     private final SubscriptionMapper subscriptionMapper;
     private final UserService userService;
+    private final PaymentService paymentService;
 
     @Override
-    public SubscriptionDTO subscribe(SubscriptionDTO subscriptionDTO) throws Exception {
+    public PaymentInitiateResponse subscribe(SubscriptionDTO subscriptionDTO) throws Exception {
 
         User user = userService.getCurrentUser();
 
@@ -42,8 +48,17 @@ public class SubscriptionImpl implements SubscriptionService {
         Subscription savedSubscription = subscriptionRepository.save(subscription);
 
         // create payment
+        PaymentInitiateRequest paymentInitiateRequest = PaymentInitiateRequest
+                .builder()
+                .userId(user.getId())
+                .subscriptionId(subscription.getId())
+                .paymentType(PaymentType.MEMBERSHIP)
+                .gateway(PaymentGateway.STRIPE)
+                .amount(subscription.getPrice())
+                .description("Library Subscription - " + plan.getName())
+                .build();
 
-        return subscriptionMapper.toDTO(savedSubscription);
+        return paymentService.initiatePayment(paymentInitiateRequest);
     }
 
     @Override

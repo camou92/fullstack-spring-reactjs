@@ -16,10 +16,8 @@ import com.camoutech.repository.PaymentRepository;
 import com.camoutech.repository.SubscriptionRepository;
 import com.camoutech.repository.UserRepository;
 import com.camoutech.service.PaymentService;
-import com.camoutech.service.gateway.RazorpayService;
 import com.camoutech.service.gateway.StripeService;
 import lombok.RequiredArgsConstructor;
-import org.json.JSONObject;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -34,89 +32,92 @@ public class PaymentServiceImpl implements PaymentService {
     private final UserRepository userRepository;
     private final SubscriptionRepository subscriptionRepository;
     private final PaymentRepository paymentRepository;
-    private final StripeService razorpayService;
+    private final StripeService stripeService;
     private final PaymentMapper paymentMapper;
     private final PaymentEventPublisher paymentEventPublisher;
 
+    // =========================
+    // INITIATE PAYMENT (Stripe)
+    // =========================
     @Override
     public PaymentInitiateResponse initiatePayment(PaymentInitiateRequest request) throws Exception {
 
-        User user = userRepository.findById(request.getUserId()).get();
+        User user = userRepository.findById(request.getUserId())
+                .orElseThrow(() -> new Exception("User not found"));
 
         Payment payment = new Payment();
         payment.setUser(user);
         payment.setPaymentType(request.getPaymentType());
-        payment.setGateway(request.getGateway());
+        payment.setGateway(PaymentGateway.STRIPE);
         payment.setAmount(request.getAmount());
-
         payment.setDescription(request.getDescription());
         payment.setStatus(PaymentStatus.PENDING);
         payment.setTransactionId("TXN_" + UUID.randomUUID());
         payment.setInitiatedAt(LocalDateTime.now());
 
         if (request.getSubscriptionId() != null) {
-            Subscription sub = subscriptionRepository
+            Subscription subscription = subscriptionRepository
                     .findById(request.getSubscriptionId())
                     .orElseThrow(() -> new Exception("Subscription not found"));
+            payment.setSubscription(subscription);
         }
+
         payment = paymentRepository.save(payment);
 
-        PaymentInitiateResponse response = new PaymentInitiateResponse();
-        if (request.getGateway() == PaymentGateway.RAZORPAY) {
-            PaymentLinkResponse paymentLinkResponse = razorpayService.createPaymentLink(user, payment);
-            response = PaymentInitiateResponse.builder()
-                    .paymentId(payment.getId())
-                    .gateway(payment.getGateway())
-                    .checkoutUrl(paymentLinkResponse.getPayment_link_url())
-                    .transactionId(paymentLinkResponse.getPayment_link_id())
-                    .amount(payment.getAmount())
-                    .description(payment.getDescription())
-                    .success(true)
-                    .message("Payment initiated successfully")
-                    .build();
+        // ===== Création du lien de paiement Stripe (Price dynamique)
+        PaymentLinkResponse paymentLinkResponse = stripeService.createPaymentLink(user, payment);
 
-            payment.setGatewayOrderId(paymentLinkResponse.getPayment_link_id());
-        }
+        payment.setGatewayOrderId(paymentLinkResponse.getPayment_link_id());
         payment.setStatus(PaymentStatus.PROCESSING);
         paymentRepository.save(payment);
-        return response;
+
+        return PaymentInitiateResponse.builder()
+                .paymentId(payment.getId())
+                .gateway(payment.getGateway())
+                .checkoutUrl(paymentLinkResponse.getPayment_link_url())
+                .transactionId(paymentLinkResponse.getPayment_link_id())
+                .amount(payment.getAmount())
+                .description(payment.getDescription())
+                .success(true)
+                .message("Stripe payment initiated successfully")
+                .build();
     }
 
+    // =========================
+    // VERIFY PAYMENT (Stripe)
+    // =========================
     @Override
     public PaymentDTO verifyPayment(PaymentVerifyRequest request) throws Exception {
-        JSONObject paymentDetails = razorpayService.fetchPaymentDetails(
-                request.getRazorpayPaymentId()
-        );
 
-        JSONObject notes = paymentDetails.getJSONObject("notes");
+        String sessionId = request.getSessionId();
 
-        Long paymentId = Long.parseLong(notes.optString("payment_id"));
+        Payment payment = paymentRepository
+                .findByGatewayOrderId(sessionId)
+                .orElseThrow(() -> new Exception("Payment not found"));
 
-        Payment payment = paymentRepository.findById(paymentId).get();
-
-        boolean isValid = razorpayService.isValidPayment(request.getRazorpayPaymentId());
-
-        if (PaymentGateway.RAZORPAY == payment.getGateway()) {
-            if (isValid) {
-                payment.setGatewayOrderId(request.getRazorpayPaymentId());
-            }
-        }
+        boolean isValid = stripeService.isValidPayment(sessionId);
 
         if (isValid) {
             payment.setStatus(PaymentStatus.SUCCESS);
             payment.setCompletedAt(LocalDateTime.now());
-            payment = paymentRepository.save(payment);
+            paymentRepository.save(payment);
 
-            // publish payment success event
+            // 🔔 Event paiement réussi
             paymentEventPublisher.publishPaymentSuccessEvent(payment);
+        } else {
+            payment.setStatus(PaymentStatus.FAILED);
+            paymentRepository.save(payment);
         }
+
         return paymentMapper.toDTO(payment);
     }
 
+    // =========================
+    // GET ALL PAYMENTS
+    // =========================
     @Override
     public Page<PaymentDTO> getAllPayments(Pageable pageable) {
-        Page<Payment> payments = paymentRepository.findAll(pageable);
-
-        return payments.map(paymentMapper::toDTO);
+        return paymentRepository.findAll(pageable)
+                .map(paymentMapper::toDTO);
     }
 }
